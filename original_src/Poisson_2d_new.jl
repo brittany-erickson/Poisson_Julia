@@ -4,7 +4,7 @@ using LinearAlgebra
 using SparseArrays
 using Plots
 
-using CuArrays, CUDAnative
+
 using IterativeSolvers
 using BenchmarkTools
 
@@ -20,6 +20,21 @@ end
 function u(x,y)
            return sin.(π*x .+ π*y)
        end
+
+       
+function uy(x,y)
+        return π .* cos.(π*x .+ π*y)#π .*  cos.(π*x .+ π*y)
+    end
+
+function ux(x,y)
+        return π .* cos.(π*x .+ π*y) #π .*  cos.(π*x .+ π*y)
+end
+
+function source(x,y)
+    u_xx = -π^2 .* sin.(π*x .+ π*y)
+    u_yy = -π^2 .* sin.(π*x .+ π*y)
+    return u_xx .+ u_yy #π .*  cos.(π*x .+ π*y)
+end
 
 function Diag(A)
     # Self defined function that is similar to Matlab Diag
@@ -103,8 +118,8 @@ h_list_x = [1/2^3, 1/2^4, 1/2^5, 1/2^6, 1/2^7, 1/2^8]
 h_list_y = [1/2^3, 1/2^4, 1/2^5, 1/2^6, 1/2^7, 1/2^8]
 
 rel_errs = []
-iter_errs = []
-for k in 1:length(h_list_x) - 4
+
+for k in 1:length(h_list_x) - 1
     i = j  = k
     hx = h_list_x[i]
     hy = h_list_y[j]
@@ -123,7 +138,7 @@ for k in 1:length(h_list_x) - 4
     
     
      # Analytical Solutions
-    analy_sol = u(x,y')
+    analy_sol = u(x',y)
     
     # Penalty Parameters
     tau_E = -13/hx
@@ -138,8 +153,8 @@ for k in 1:length(h_list_x) - 4
     ## Formulation 1
     SAT_W = tau_W*HI_x*E_W + beta*HI_x*BS_x'*E_W
     SAT_E = tau_E*HI_x*E_E + beta*HI_x*BS_x'*E_E
-    SAT_S = tau_S*HI_y*E_S*D1_y
-    SAT_N = tau_N*HI_y*E_N*D1_y
+    SAT_S = tau_S*HI_y*E_S*BS_y
+    SAT_N = tau_N*HI_y*E_N*BS_y
     
     SAT_W_r = tau_W*HI_x*E_W*e_W + beta*HI_x*BS_x'*E_W*e_W
     SAT_E_r = tau_E*HI_x*E_E*e_E + beta*HI_x*BS_x'*E_E*e_E
@@ -149,32 +164,36 @@ for k in 1:length(h_list_x) - 4
 
 
 
-    g_W = sin.(π*y)
-    g_E = -sin.(π*y)
-    g_S = π*cos.(π*x)
-    g_N = -π*cos.(π*x)
+    g_W = u(0,y)
+    g_E = u(1,y)
+    g_S = -uy(x,0)
+    g_N = uy(x,1)
     
     # Solving with CPU
     A = D2 + SAT_W + SAT_E + SAT_S + SAT_N
-
-    b = -2π^2*u(x,y')[:] + SAT_W_r*g_W + SAT_E_r*g_E + SAT_S_r*g_S + SAT_N_r*g_N
+    @show isposdef(A)
+    A = -H_tilde*A
+    @show isposdef(A)
+    #b = -2π^2*u(x,y')[:] + SAT_W_r*g_W + SAT_E_r*g_E + SAT_S_r*g_S + SAT_N_r*g_N
+   
+    b = source(x', y)[:] + SAT_W_r*g_W + SAT_E_r*g_E + SAT_S_r*g_S + SAT_N_r*g_N
+    b = -H_tilde*b
     
-    A_d = cu(A)
-    b_d = cu(b)
-    init_guess = cu(rand(length(b)));
+    u_num = A\b
+    num_sol = reshape(u_num,N_y+1,N_x+1)
+    exact_sol = reshape(analy_sol,N_y+1,N_x+1)
+    #p = plot(x, y, num_sol-exact_sol, st = :surface, camera=(-30,30),xlabel = "x", ylabel = "y")
+    
+    #display(p)
+    err2 = (num_sol[:] - analy_sol[:])' * H_tilde * (num_sol[:] - analy_sol[:])
+    num_sol[:] - analy_sol[:]
+    err3 = √err2
+    push!(rel_errs,err3)
 
-    num_sol = reshape(A\b,N_y+1,N_x+1)
-    cu_sol = reshape(cg!(init_guess,A_d,b_d),N_y+1,N_x+1)
-    err = (num_sol[:] - analy_sol[:])' * H_tilde * (num_sol[:] - analy_sol[:])
-    iter_err = (cu_sol[:] - analy_sol[:])' * H_tilde * (cu_sol[:] - analy_sol[:])
-    rel_err = √err
-    iter_err = √iter_err
-    push!(rel_errs,rel_err)
-    push!(iter_errs,iter_err)
 end
 
 println(rel_errs)
-println(log2.(rel_errs))
+#println(log2.(rel_errs))
 
-println(iter_errs)
-println(log2.(iter_errs))
+println(log2.(rel_errs[1:end-1] ./ rel_errs[2:end]))
+#println(log2.(iter_errs))
